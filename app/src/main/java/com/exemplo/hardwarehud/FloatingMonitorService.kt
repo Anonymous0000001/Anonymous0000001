@@ -197,7 +197,7 @@ class FloatingMonitorService : Service() {
         }
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Hardware HUD Ativo")
+            .setContentTitle("KZO PRO Ativo")
             .setContentText("Toque no X da janela flutuante para fechar")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .build()

@@ -1,4 +1,4 @@
-name: Gerar APK Hardware HUD
+name: Gerar APK KZO PRO
 
 on:
   push:
@@ -33,12 +33,12 @@ jobs:
       - name: 5. Subir APK nos Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: HardwareHUD-APK
+          name: KZO-PRO-APK
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: 6. Publicar APK direto em Releases (Download Direto)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "Hardware HUD v1.0.${{ github.run_number }}"
+          tag_name: v2.0.${{ github.run_number }}
+          name: "KZO PRO v2.0.${{ github.run_number }}"
           files: app/build/outputs/apk/debug/app-debug.apk

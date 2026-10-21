@@ -8,7 +8,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Hardware HUD"
+        android:label="KZO PRO"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
 

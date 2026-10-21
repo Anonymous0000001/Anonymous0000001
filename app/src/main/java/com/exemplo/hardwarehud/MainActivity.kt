@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val header = TextView(this).apply {
-            text = "⚡ HARDWARE HUD PRO - DIAGNÓSTICO TÉCNICO"
+            text = "⚡ KZO PRO - DIAGNÓSTICO TÉCNICO"
             setTextColor(Color.parseColor("#00FF88"))
             textSize = 16f
             typeface = Typeface.MONOSPACE
