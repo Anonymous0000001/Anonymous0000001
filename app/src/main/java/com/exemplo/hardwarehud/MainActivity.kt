@@ -73,6 +73,23 @@ class MainActivity : AppCompatActivity() {
         tvLiveMetrics = criarBlocoTexto("Lendo telemetria elétrica e clocks...")
         tvControllers = criarBlocoTexto("Verificando barramentos USB/Bluetooth...")
         tvSpecs = criarBlocoTexto(diagnostics.getDeepSystemSpecs())
+        val tvGithubProfile = TextView(this).apply {
+            text = "github.com/Anonymous0000001"
+            setTextColor(Color.parseColor("#58A6FF"))
+            textSize = 14f
+            typeface = Typeface.MONOSPACE
+            paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+            setPadding(24, 20, 24, 20)
+            contentDescription = "Abrir perfil do GitHub de Anonymous0000001"
+            setOnClickListener {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://github.com/Anonymous0000001")
+                    )
+                )
+            }
+        }
 
         val btnTestStress = Button(this).apply {
             text = "RODAR BENCHMARK RÁPIDO DE CPU (STRESS 3s)"
@@ -97,6 +114,8 @@ class MainActivity : AppCompatActivity() {
         container.addView(btnTestStress, lpBtn)
         container.addView(criarTituloSecao("ESPECIFICAÇÕES DE HARDWARE, KERNEL E SEGURANÇA"))
         container.addView(tvSpecs)
+        container.addView(criarTituloSecao("MEU PERFIL"))
+        container.addView(tvGithubProfile)
 
         scroll.addView(container)
         setContentView(scroll)
