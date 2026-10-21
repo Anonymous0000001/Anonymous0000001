@@ -22,6 +22,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".GamepadTestActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ScreenTestActivity"
+            android:exported="false" />
+
         <service
             android:name=".FloatingMonitorService"
             android:enabled="true"

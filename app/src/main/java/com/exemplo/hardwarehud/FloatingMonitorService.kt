@@ -169,19 +169,24 @@ class FloatingMonitorService : Service() {
 
     private fun atualizarDadosHardware() {
         val (usedRam, totalRam, ramPercent) = diagnostics.getRamData()
-        val (cpuLoad, cpuCoresText) = diagnostics.getCpuData()
+        val batteryTempC = diagnostics.getBatteryTemperatureC()
+        val cpuTelemetry = diagnostics.getCpuTelemetry(batteryTempC)
         val batInfo = diagnostics.getBatteryTechInfo()
         val (netSpeed, ip) = diagnostics.getNetworkSpeedAndIp()
 
         graphRam.addValue(ramPercent.toFloat(), "$usedRam / $totalRam MB ($ramPercent%)")
-        graphCpu.addValue(cpuLoad, "${cpuLoad.toInt()}% Clock Médio")
+        graphCpu.addValue(
+            cpuTelemetry.avgClockPercent,
+            "${cpuTelemetry.avgClockPercent.toInt()}% Clock Médio"
+        )
 
         val tempText = batInfo["Tensão / Temp"] ?: "N/A"
         tvStats.text = """
             FPS: $currentFps | RAM: $usedRam/$totalRam MB ($ramPercent%)
             BAT: ${batInfo["Status"]} | TEMP: $tempText
             REDE: $netSpeed (IP:$ip)
-            CPU: $cpuCoresText
+            CPU: ${if (cpuTelemetry.possibleThrottling) "Possível limite térmico de clock" else "Sem alerta"}
+            ${cpuTelemetry.coresText}
         """.trimIndent()
     }
 

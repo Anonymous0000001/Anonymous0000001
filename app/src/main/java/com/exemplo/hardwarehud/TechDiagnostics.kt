@@ -6,8 +6,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.Sensor
 import android.hardware.SensorManager
+import android.media.MediaCodecList
+import android.media.MediaDrm
 import android.net.TrafficStats
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
@@ -17,13 +20,88 @@ import java.io.File
 import java.io.InputStreamReader
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.UUID
 import kotlin.math.abs
+
+data class CpuTelemetry(
+    val avgClockPercent: Float,
+    val coresText: String,
+    val possibleThrottling: Boolean,
+    val coreRatios: FloatArray,
+    val minClockText: String,
+    val maxClockText: String
+)
+
+data class SocDetails(
+    val processorName: String,
+    val architecture: String,
+    val revision: String,
+    val processNode: String
+)
+
+data class BatteryTelemetry(
+    val status: String,
+    val currentMa: Int,
+    val peakCurrentMa: Int,
+    val powerWatts: Double,
+    val voltageMv: Int,
+    val temperatureC: Double?,
+    val health: String
+)
 
 class TechDiagnostics(private val context: Context) {
 
     private var lastRxBytes = TrafficStats.getTotalRxBytes()
     private var lastTxBytes = TrafficStats.getTotalTxBytes()
     private var lastNetTime = System.currentTimeMillis()
+    private var peakBatteryCurrentMa = 0
+
+    fun getSocDetails(): SocDetails {
+        val hardware = Build.HARDWARE.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
+        val unavailableSoc = hardware?.let { "Não identificado (hardware: $it)" }
+            ?: "Não informado pelo dispositivo"
+        val socName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
+        } else {
+            null
+        } ?: unavailableSoc
+
+        var cpuPart: String? = null
+        var revision: String? = null
+        try {
+            File("/proc/cpuinfo").useLines { lines ->
+                lines.forEach { line ->
+                    val key = line.substringBefore(':').trim().lowercase()
+                    val value = line.substringAfter(':', "").trim()
+                    when {
+                        key == "cpu part" && value.isNotEmpty() -> cpuPart = value
+                        key == "cpu revision" && value.isNotEmpty() -> revision = value
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val architecture = when (cpuPart?.lowercase()) {
+            "0xd03" -> "ARM Cortex-A53"
+            "0xd05" -> "ARM Cortex-A55"
+            "0xd07" -> "ARM Cortex-A57"
+            "0xd08" -> "ARM Cortex-A72"
+            "0xd09" -> "ARM Cortex-A73"
+            "0xd0a" -> "ARM Cortex-A75"
+            "0xd0b" -> "ARM Cortex-A76"
+            "0xd0d" -> "ARM Cortex-A77"
+            "0xd41" -> "ARM Cortex-A78"
+            else -> Build.SUPPORTED_ABIS.firstOrNull() ?: "Não informado pelo dispositivo"
+        }
+
+        return SocDetails(
+            processorName = socName,
+            architecture = architecture,
+            revision = revision?.let { "r$it" } ?: "Não informada",
+            processNode = "Não informado pelo dispositivo"
+        )
+    }
 
     fun getRamData(): Triple<Long, Long, Int> {
         val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -35,22 +113,63 @@ class TechDiagnostics(private val context: Context) {
         return Triple(usedMb, totalMb, percent)
     }
 
-    fun getCpuData(): Pair<Float, String> {
+    fun getBatteryTemperatureC(): Double? {
+        val batteryIntent = context.registerReceiver(
+            null,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        )
+        val temperatureTenthsC = batteryIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+        return if (temperatureTenthsC >= 0) temperatureTenthsC / 10.0 else null
+    }
+
+    fun getCpuTelemetry(batteryTempC: Double?): CpuTelemetry {
         val cores = Runtime.getRuntime().availableProcessors()
+        val coreRatios = FloatArray(cores)
         val sb = StringBuilder()
         var totalRatio = 0f
         var validCores = 0
+        var throttlingDetected = false
+        var minFrequencyKhz = Long.MAX_VALUE
+        var maxFrequencyKhz = 0L
 
         for (i in 0 until cores) {
             val curFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
             val maxFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq")
+            val minFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_min_freq")
+            val scalingMaxFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_max_freq")
             try {
+                val hardwareMaxKhz = if (maxFile.exists()) {
+                    maxFile.readText().trim().toLong()
+                } else {
+                    0L
+                }
+                val hardwareMinKhz = if (minFile.exists()) {
+                    minFile.readText().trim().toLong()
+                } else {
+                    0L
+                }
+                if (hardwareMaxKhz > 0) maxFrequencyKhz = maxOf(maxFrequencyKhz, hardwareMaxKhz)
+                if (hardwareMinKhz > 0) {
+                    minFrequencyKhz = minOf(minFrequencyKhz, hardwareMinKhz)
+                }
                 if (curFile.exists()) {
                     val curKhz = curFile.readText().trim().toLong()
-                    val maxKhz = if (maxFile.exists()) maxFile.readText().trim().toLong() else 2500000L
-                    if (maxKhz > 0) {
-                        totalRatio += (curKhz.toFloat() / maxKhz.toFloat()) * 100f
+                    val scalingMaxKhz = if (scalingMaxFile.exists()) {
+                        scalingMaxFile.readText().trim().toLong()
+                    } else {
+                        hardwareMaxKhz
+                    }
+                    if (hardwareMaxKhz > 0) {
+                        val ratio = (curKhz.toFloat() / hardwareMaxKhz.toFloat()).coerceIn(0f, 1f)
+                        coreRatios[i] = ratio
+                        totalRatio += ratio * 100f
                         validCores++
+                        if (batteryTempC != null &&
+                            batteryTempC >= 41.0 &&
+                            scalingMaxKhz < hardwareMaxKhz * 0.85
+                        ) {
+                            throttlingDetected = true
+                        }
                     }
                     sb.append("C$i: ${curKhz / 1000}MHz")
                 } else {
@@ -63,7 +182,117 @@ class TechDiagnostics(private val context: Context) {
         }
 
         val avgLoad = if (validCores > 0) (totalRatio / validCores) else 0f
-        return Pair(avgLoad, sb.toString())
+        if (batteryTempC != null && batteryTempC >= 44.0) throttlingDetected = true
+        val minClockText = if (minFrequencyKhz != Long.MAX_VALUE) {
+            "${minFrequencyKhz / 1000} MHz"
+        } else {
+            "N/A"
+        }
+        val maxClockText = if (maxFrequencyKhz > 0) {
+            String.format("%.2f GHz", maxFrequencyKhz / 1_000_000.0)
+        } else {
+            "N/A"
+        }
+        return CpuTelemetry(
+            avgClockPercent = avgLoad,
+            coresText = sb.toString(),
+            possibleThrottling = throttlingDetected,
+            coreRatios = coreRatios,
+            minClockText = minClockText,
+            maxClockText = maxClockText
+        )
+    }
+
+    fun getBatteryTelemetry(): BatteryTelemetry {
+        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val temperatureTenthsC =
+            intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+        val tempC = if (temperatureTenthsC >= 0) temperatureTenthsC / 10.0 else null
+        val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        val statusInt = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val healthInt = intent?.getIntExtra(BatteryManager.EXTRA_HEALTH, -1) ?: -1
+        val technology = intent?.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY) ?: "N/A"
+        val manager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        val rawCurrent = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        val currentMa = if (abs(rawCurrent.toDouble()) > 10_000) rawCurrent / 1000 else rawCurrent
+        val absoluteCurrentMa = abs(currentMa)
+        peakBatteryCurrentMa = maxOf(peakBatteryCurrentMa, absoluteCurrentMa)
+        val powerWatts = (absoluteCurrentMa * (voltageMv / 1000.0)) / 1000.0
+
+        val status = when (statusInt) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> "Carregando ($level%)"
+            BatteryManager.BATTERY_STATUS_FULL -> "Carga completa ($level%)"
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> "Descarregando ($level%)"
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Não carregando ($level%)"
+            else -> "Estado indisponível ($level%)"
+        }
+        val health = when (healthInt) {
+            BatteryManager.BATTERY_HEALTH_GOOD -> "Boa ($technology)"
+            BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Superaquecida ($technology)"
+            BatteryManager.BATTERY_HEALTH_DEAD -> "Degradada ($technology)"
+            BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Sobretensão ($technology)"
+            else -> "Indisponível ($technology)"
+        }
+
+        return BatteryTelemetry(
+            status = status,
+            currentMa = currentMa,
+            peakCurrentMa = peakBatteryCurrentMa,
+            powerWatts = powerWatts,
+            voltageMv = voltageMv,
+            temperatureC = tempC,
+            health = health
+        )
+    }
+
+    fun getGpuAndMediaSpecs(): String {
+        val codecs = try {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                .filterNot { it.isEncoder }
+                .flatMap { codec ->
+                    val name = codec.name.lowercase()
+                    buildList {
+                        if ("av1" in name) add("AV1")
+                        if ("hevc" in name || "h265" in name) add("HEVC")
+                        if ("avc" in name || "h264" in name) add("H.264")
+                        if ("vp9" in name) add("VP9")
+                    }
+                }
+                .distinct()
+                .sorted()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val widevineLevel = try {
+            val uuid = UUID(-0x121074568629b532L, -0x5c37d8232ae2de13L)
+            val mediaDrm = MediaDrm(uuid)
+            try {
+                mediaDrm.getPropertyString("securityLevel")
+            } finally {
+                mediaDrm.release()
+            }
+        } catch (_: Exception) {
+            "Indisponível"
+        }
+        val hardware = Build.HARDWARE.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
+            ?: "Não informado pelo dispositivo"
+
+        return """
+            • Plataforma de hardware reportada: $hardware
+            • GPU renderer: Não exposto por esta interface Android
+            • Widevine DRM: $widevineLevel
+            • Codecs de vídeo: ${codecs.ifEmpty { listOf("Não informado") }.joinToString(", ")}
+        """.trimIndent()
+    }
+
+    fun getSensorsListText(): String {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensors = sensorManager.getSensorList(Sensor.TYPE_ALL)
+        if (sensors.isEmpty()) return "Nenhum sensor reportado pelo dispositivo."
+        return "Sensores disponíveis (${sensors.size}):\n\n" +
+            sensors.joinToString("\n") { "• ${it.name} (${it.vendor})" }
     }
 
     fun getBatteryTechInfo(): Map<String, String> {

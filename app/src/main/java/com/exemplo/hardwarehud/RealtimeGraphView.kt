@@ -17,12 +17,12 @@ class RealtimeGraphView(
     private var currentValueText = "0 $unit"
 
     private val bgPaint = Paint().apply {
-        color = Color.parseColor("#1A1D24")
+        color = Color.parseColor("#161922")
         style = Paint.Style.FILL
     }
 
     private val gridPaint = Paint().apply {
-        color = Color.parseColor("#2E3440")
+        color = Color.parseColor("#2A2F3D")
         strokeWidth = 2f
         style = Paint.Style.STROKE
     }
@@ -40,7 +40,7 @@ class RealtimeGraphView(
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 28f
+        textSize = 26f
         typeface = Typeface.MONOSPACE
         isFakeBoldText = true
     }
@@ -62,7 +62,7 @@ class RealtimeGraphView(
         val h = height.toFloat()
         if (w <= 0 || h <= 0) return
 
-        canvas.drawRoundRect(0f, 0f, w, h, 16f, 16f, bgPaint)
+        canvas.drawRoundRect(0f, 0f, w, h, 14f, 14f, bgPaint)
 
         canvas.drawLine(0f, h * 0.25f, w, h * 0.25f, gridPaint)
         canvas.drawLine(0f, h * 0.50f, w, h * 0.50f, gridPaint)
@@ -77,7 +77,7 @@ class RealtimeGraphView(
             for (i in dataPoints.indices) {
                 val x = i * stepX
                 val normalized = (dataPoints[i] / maxVal).coerceIn(0f, 1f)
-                val y = h - (normalized * (h - 45f)) - 8f
+                val y = h - (normalized * (h - 42f)) - 6f
 
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 fillPath.lineTo(x, y)
@@ -89,6 +89,6 @@ class RealtimeGraphView(
             canvas.drawPath(path, linePaint)
         }
 
-        canvas.drawText("$title:$currentValueText", 18f, 34f, textPaint)
+        canvas.drawText("$title:$currentValueText", 16f, 32f, textPaint)
     }
 }
