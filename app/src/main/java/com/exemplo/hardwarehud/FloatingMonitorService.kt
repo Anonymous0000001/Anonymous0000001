@@ -1,24 +1,37 @@
 package com.exemplo.hardwarehud
 
 import android.annotation.SuppressLint
-import android.app.*
-import android.content.Context
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Intent
-import android.content.IntentFilter
+import android.graphics.Color
 import android.graphics.PixelFormat
-import android.os.*
-import android.view.*
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.view.Choreographer
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
-import java.io.File
 
 class FloatingMonitorService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private lateinit var floatingView: View
+    private lateinit var rootLayout: LinearLayout
     private lateinit var tvStats: TextView
     private lateinit var tvModel: TextView
+    private lateinit var graphRam: RealtimeGraphView
+    private lateinit var graphCpu: RealtimeGraphView
 
+    private val diagnostics by lazy { TechDiagnostics(this) }
     private val handler = Handler(Looper.getMainLooper())
     private var frameCount = 0
     private var currentFps = 0
@@ -51,14 +64,57 @@ class FloatingMonitorService : Service() {
         super.onCreate()
         iniciarNotificacaoForeground()
 
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        floatingView = LayoutInflater.from(this).inflate(R.layout.overlay_hud, null)
+        windowManager = getSystemService(WindowManager::class.java)
 
-        tvStats = floatingView.findViewById(R.id.tv_hud_stats)
-        tvModel = floatingView.findViewById(R.id.tv_device_model)
-        val btnClose = floatingView.findViewById<TextView>(R.id.btn_close_hud)
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.argb(180, 10, 12, 16))
+            setPadding(16, 12, 16, 12)
+        }
 
-        tvModel.text = "${Build.MODEL} (${Build.HARDWARE})"
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        tvModel = TextView(this).apply {
+            text = "${Build.MANUFACTURER} ${Build.MODEL}"
+            setTextColor(Color.parseColor("#00FF66"))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        val btnClose = TextView(this).apply {
+            text = "✕"
+            setTextColor(Color.parseColor("#FF4444"))
+            textSize = 14f
+            setPadding(18, 0, 0, 0)
+            setOnClickListener { stopSelf() }
+        }
+
+        header.addView(tvModel)
+        header.addView(btnClose)
+
+        tvStats = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, 8, 0, 8)
+        }
+
+        graphRam = RealtimeGraphView(this, "RAM", "%", 100f, Color.parseColor("#00E5FF"))
+        graphCpu = RealtimeGraphView(this, "CPU", "%", 100f, Color.parseColor("#FF9100"))
+
+        val graphParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            140
+        ).apply { topMargin = 8 }
+
+        rootLayout.addView(header)
+        rootLayout.addView(tvStats)
+        rootLayout.addView(graphRam, graphParams)
+        rootLayout.addView(graphCpu, graphParams)
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -72,7 +128,7 @@ class FloatingMonitorService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -80,9 +136,7 @@ class FloatingMonitorService : Service() {
             y = 80
         }
 
-        btnClose.setOnClickListener { stopSelf() }
-
-        floatingView.setOnTouchListener(object : View.OnTouchListener {
+        rootLayout.setOnTouchListener(object : View.OnTouchListener {
             private var initialX = 0
             private var initialY = 0
             private var initialTouchX = 0f
@@ -100,7 +154,7 @@ class FloatingMonitorService : Service() {
                     MotionEvent.ACTION_MOVE -> {
                         params.x = initialX + (event.rawX - initialTouchX).toInt()
                         params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(floatingView, params)
+                        windowManager.updateViewLayout(rootLayout, params)
                         return true
                     }
                 }
@@ -108,41 +162,26 @@ class FloatingMonitorService : Service() {
             }
         })
 
-        windowManager.addView(floatingView, params)
+        windowManager.addView(rootLayout, params)
         Choreographer.getInstance().postFrameCallback(frameCallback)
         handler.post(updateRunnable)
     }
 
     private fun atualizarDadosHardware() {
-        val actManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memInfo = ActivityManager.MemoryInfo()
-        actManager.getMemoryInfo(memInfo)
-        val totalRam = memInfo.totalMem / (1024 * 1024)
-        val usedRam = totalRam - (memInfo.availMem / (1024 * 1024))
-        val ramPercent = ((usedRam.toDouble() / totalRam) * 100).toInt()
+        val (usedRam, totalRam, ramPercent) = diagnostics.getRamData()
+        val (cpuLoad, cpuCoresText) = diagnostics.getCpuData()
+        val batInfo = diagnostics.getBatteryTechInfo()
+        val (netSpeed, ip) = diagnostics.getNetworkSpeedAndIp()
 
-        val batIntent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = batIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val temp = (batIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
-        val voltage = batIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        graphRam.addValue(ramPercent.toFloat(), "$usedRam / $totalRam MB ($ramPercent%)")
+        graphCpu.addValue(cpuLoad, "${cpuLoad.toInt()}% Clock Médio")
 
-        val cores = Runtime.getRuntime().availableProcessors()
-        val cpuBuilder = StringBuilder()
-        for (i in 0 until cores) {
-            val freqFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
-            val freqMhz = if (freqFile.exists()) {
-                try { "${freqFile.readText().trim().toLong() / 1000}MHz" } catch (e: Exception) { "N/A" }
-            } else "Off"
-            cpuBuilder.append("C$i:$freqMhz")
-            if (i % 2 == 1 && i != cores - 1) cpuBuilder.append("\n") else if (i != cores - 1) cpuBuilder.append(" | ")
-        }
-
+        val tempText = batInfo["Tensão / Temp"] ?: "N/A"
         tvStats.text = """
-            FPS: $currentFps | TEMP: $temp°C
-            RAM: $usedRam/$totalRam MB ($ramPercent%)
-            BAT: $level% (${voltage}mV)
-            --- CPU ($cores Cores) ---
-            $cpuBuilder
+            FPS: $currentFps | RAM: $usedRam/$totalRam MB ($ramPercent%)
+            BAT: ${batInfo["Status"]} | TEMP: $tempText
+            REDE: $netSpeed (IP:$ip)
+            CPU: $cpuCoresText
         """.trimIndent()
     }
 
@@ -169,9 +208,12 @@ class FloatingMonitorService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Choreographer.getInstance().removeFrameCallback(frameCallback)
-        handler.removeCallbacks(updateRunnable)
-        if (::floatingView.isInitialized) {
-            windowManager.removeView(floatingView)
+        handler.removeCallbacksAndMessages(null)
+        if (this::rootLayout.isInitialized) {
+            try {
+                windowManager.removeView(rootLayout)
+            } catch (_: IllegalArgumentException) {
+            }
         }
     }
 }
