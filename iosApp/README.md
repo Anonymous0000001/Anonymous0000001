@@ -1,18 +1,18 @@
 # KZO PRO iOS App
 
-Este diretório contém um scaffold de app iOS em SwiftUI para abrir uma build separada do KZO PRO.
+Este diretório contém a versão iOS do KZO PRO em SwiftUI, com uma interface inspirada no painel de diagnóstico do Android e estrutura pronta para expansão com monitoramento de hardware, bateria, sensores e dashboard de sistema.
 
 ## Estrutura
 - `KZOProApp.swift`: ponto de entrada da app
 - `ContentView.swift`: dashboard principal em SwiftUI
-- `DeviceInfo.swift`: modelo de metadados do dispositivo
+- `DeviceInfo.swift`: modelo de metadados do dispositivo e dados do ambiente
 
 ## Como abrir no Xcode
 1. Abra o Xcode.
-2. Crie um projeto novo do tipo "App".
+2. Crie um novo projeto do tipo "App".
 3. Adicione os arquivos deste diretório ao projeto.
-4. Ajuste a paleta de cores em `Assets.xcassets` ou use as cores padrão do sistema.
-5. Rode no simulador ou em um iPhone real.
+4. Se preferir, crie um `Assets.xcassets` para definir `AppBackground`, `PanelBackground`, `HeaderBackground`, `CardBackground`, `AccentGold`, `AccentSoft`, `Divider`, `Danger` e `Color` customizadas.
+5. Execute no simulador ou em um iPhone real.
 
 ## Observação
-Esta é uma build separada para iOS, inspirada no visual do Android, mas recursos específicos do Android (overlay, hardware diagnostics, permissões nativas) precisam ser reimplementados com APIs da Apple ou via Kotlin Multiplatform.
+Esta é a versão iOS da interface principal do KZO PRO. Recursos específicos do Android, como overlay nativo, acesso completo a hardware e permissões de sistema, precisam ser reimplementados com APIs do iOS ou integrações específicas por plataforma.
